@@ -9,7 +9,7 @@ import numpy as np
 
 # Page configuration
 st.set_page_config(
-    page_title="🛡️ Warranty Analysis Dashboard",
+    page_title="Warranty Analysis Dashboard",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
