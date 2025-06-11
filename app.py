@@ -316,6 +316,202 @@ def display_data_table(df: pd.DataFrame):
     st.dataframe(table_df, use_container_width=True, height=400)
 
 
+def analyze_dealer_warranty_consistency(df: pd.DataFrame) -> pd.DataFrame:
+    """Analyze dealer warranty consistency - what % of dealers have same warranty on 90%+ of their ads."""
+
+    # Filter for dealers with warranty information
+    warranty_df = df[
+        df["warranty_period_type"].notna() & (df["warranty_period_type"] != "")
+    ]
+
+    if warranty_df.empty:
+        return pd.DataFrame()
+
+    # Group by dealer and analyze their warranty consistency
+    dealer_analysis = []
+
+    for dealer_id in warranty_df["dhf_dealer_id"].unique():
+        dealer_ads = warranty_df[warranty_df["dhf_dealer_id"] == dealer_id]
+        total_ads = len(dealer_ads)
+
+        # Skip dealers with very few ads (less than 5)
+        if total_ads < 5:
+            continue
+
+        # Count warranty types for this dealer
+        warranty_counts = dealer_ads["warranty_period_type"].value_counts()
+
+        # Find the most common warranty type and its percentage
+        most_common_warranty = warranty_counts.index[0]
+        most_common_count = warranty_counts.iloc[0]
+        consistency_percentage = (most_common_count / total_ads) * 100
+
+        dealer_analysis.append(
+            {
+                "dealer_id": dealer_id,
+                "total_warranty_ads": total_ads,
+                "most_common_warranty": most_common_warranty,
+                "most_common_count": most_common_count,
+                "consistency_percentage": consistency_percentage,
+                "is_90_percent_consistent": consistency_percentage >= 90,
+            }
+        )
+
+    return pd.DataFrame(dealer_analysis)
+
+
+def create_consistency_analysis(df: pd.DataFrame):
+    """Create dealer warranty consistency analysis section."""
+    st.subheader("🎯 Dealer Warranty Consistency Analysis")
+
+    # Perform the analysis
+    consistency_df = analyze_dealer_warranty_consistency(df)
+
+    if consistency_df.empty:
+        st.warning("No warranty data available for consistency analysis.")
+        return
+
+    # Calculate key metrics
+    total_dealers = len(consistency_df)
+    consistent_dealers = consistency_df["is_90_percent_consistent"].sum()
+    consistency_rate = (
+        (consistent_dealers / total_dealers) * 100 if total_dealers > 0 else 0
+    )
+
+    # Display key metrics
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            label="🏢 Total Dealers Analyzed",
+            value=f"{total_dealers:,}",
+            help="Dealers with 5+ warranty ads",
+        )
+
+    with col2:
+        st.metric(
+            label="✅ Consistent Dealers",
+            value=f"{consistent_dealers:,}",
+            help="Dealers with same warranty on 90%+ of ads",
+        )
+
+    with col3:
+        st.metric(
+            label="📊 Consistency Rate",
+            value=f"{consistency_rate:.1f}%",
+            help="% of dealers with standardized warranties",
+        )
+
+    with col4:
+        avg_consistency = consistency_df["consistency_percentage"].mean()
+        st.metric(
+            label="📈 Average Consistency",
+            value=f"{avg_consistency:.1f}%",
+            help="Average warranty consistency across all dealers",
+        )
+
+    # Create visualizations
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Consistency distribution
+        fig_hist = px.histogram(
+            consistency_df,
+            x="consistency_percentage",
+            nbins=20,
+            title="Distribution of Dealer Warranty Consistency",
+            labels={
+                "consistency_percentage": "Warranty Consistency (%)",
+                "count": "Number of Dealers",
+            },
+            color_discrete_sequence=["#667eea"],
+        )
+        fig_hist.add_vline(
+            x=90,
+            line_dash="dash",
+            line_color="red",
+            annotation_text="90% Threshold",
+            annotation_position="top right",
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+    with col2:
+        # Consistent vs Inconsistent
+        consistency_labels = ["Consistent (≥90%)", "Inconsistent (<90%)"]
+        consistency_values = [consistent_dealers, total_dealers - consistent_dealers]
+
+        fig_pie = px.pie(
+            values=consistency_values,
+            names=consistency_labels,
+            title="Dealer Warranty Consistency Split",
+            color_discrete_sequence=["#10b981", "#ef4444"],
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    # Most common warranty types among consistent dealers
+    consistent_dealers_df = consistency_df[consistency_df["is_90_percent_consistent"]]
+    if not consistent_dealers_df.empty:
+        st.subheader("🏆 Most Common Warranty Types (Consistent Dealers)")
+        warranty_type_counts = consistent_dealers_df[
+            "most_common_warranty"
+        ].value_counts()
+
+        fig_bar = px.bar(
+            x=warranty_type_counts.index,
+            y=warranty_type_counts.values,
+            title="Popular Warranty Types Among Consistent Dealers",
+            labels={"x": "Warranty Type", "y": "Number of Dealers"},
+            color_discrete_sequence=["#667eea"],
+        )
+        fig_bar.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    # Detailed table
+    with st.expander("📋 Detailed Dealer Consistency Data"):
+        # Sort by consistency percentage descending
+        display_df = consistency_df.sort_values(
+            "consistency_percentage", ascending=False
+        ).copy()
+
+        # Format for display
+        display_df["Dealer"] = display_df["dealer_id"].apply(lambda x: f"Dealer {x}")
+        display_df["Warranty Type"] = (
+            display_df["most_common_warranty"].str.replace("_", " ").str.title()
+        )
+        display_df["Consistency %"] = display_df["consistency_percentage"].round(1)
+        display_df["Status"] = display_df["is_90_percent_consistent"].apply(
+            lambda x: "✅ Consistent" if x else "❌ Inconsistent"
+        )
+
+        # Select columns for display
+        table_columns = [
+            "Dealer",
+            "total_warranty_ads",
+            "Warranty Type",
+            "most_common_count",
+            "Consistency %",
+            "Status",
+        ]
+
+        column_mapping = {
+            "total_warranty_ads": "Total Warranty Ads",
+            "most_common_count": "Ads with Most Common Warranty",
+        }
+
+        display_table = display_df[table_columns].rename(columns=column_mapping)
+
+        st.dataframe(display_table, use_container_width=True, height=400)
+
+        # Export functionality for consistency data
+        csv_data = display_table.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Consistency Analysis",
+            data=csv_data,
+            file_name=f"dealer_warranty_consistency_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+        )
+
+
 def export_data(df: pd.DataFrame):
     """Provide data export functionality."""
     st.subheader("📥 Export Data")
@@ -334,6 +530,27 @@ def export_data(df: pd.DataFrame):
 
     with col2:
         if st.button("📋 Export Summary Report"):
+            # Include consistency analysis in summary
+            consistency_df = analyze_dealer_warranty_consistency(df)
+
+            if not consistency_df.empty:
+                total_dealers = len(consistency_df)
+                consistent_dealers = consistency_df["is_90_percent_consistent"].sum()
+                consistency_rate = (consistent_dealers / total_dealers) * 100
+
+                consistency_summary = f"""
+## Dealer Warranty Consistency Analysis
+- Total Dealers Analyzed: {total_dealers:,}
+- Dealers with 90%+ Consistency: {consistent_dealers:,}
+- Overall Consistency Rate: {consistency_rate:.1f}%
+- Average Consistency: {consistency_df["consistency_percentage"].mean():.1f}%
+
+### Most Common Warranty Types (Consistent Dealers)
+{consistency_df[consistency_df["is_90_percent_consistent"]]["most_common_warranty"].value_counts().head(5).to_string()}
+                """
+            else:
+                consistency_summary = "\n## Dealer Warranty Consistency Analysis\nNo sufficient data for analysis"
+
             summary = f"""
 # Warranty Analysis Summary Report
 Generated: {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -349,6 +566,7 @@ Generated: {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 ## Top Dealers
 {df["dhf_dealer_id"].value_counts().head(10).to_string()}
+{consistency_summary}
             """
 
             st.download_button(
@@ -400,6 +618,11 @@ def main():
 
             st.markdown("---")
 
+            # NEW: Dealer Warranty Consistency Analysis
+            create_consistency_analysis(filtered_df)
+
+            st.markdown("---")
+
             # Display data table
             display_data_table(filtered_df)
 
@@ -407,23 +630,6 @@ def main():
 
             # Export functionality
             export_data(filtered_df)
-
-            # Additional insights
-            with st.expander("🔍 Additional Insights"):
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.subheader("Price Statistics")
-                    st.write(filtered_df["price"].describe())
-
-                with col2:
-                    st.subheader("Data Quality")
-                    st.write(
-                        f"Records with excerpts: {(filtered_df['warranty_excerpt'] != '').sum():,}"
-                    )
-                    st.write(
-                        f"Records with full descriptions: {filtered_df['full_description'].notna().sum():,}"
-                    )
 
     else:
         st.info("👆 Please upload your warranty CSV file to get started")
